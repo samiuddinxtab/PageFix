@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PageFix — Fix Wrongly Ordered PDF Pages Instantly</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap');
+
+  :root {
+    --bg: #0e0e0e;
+    --surface: #161616;
+    --border: #2a2a2a;
+    --accent: #e8ff47;
+    --accent-dim: rgba(232,255,71,0.12);
+    --text: #f0f0f0;
+    --muted: #666;
+    --danger: #ff5252;
+    --success: #69ff8e;
+    --mono: 'Space Mono', monospace;
+    --sans: 'Syne', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0 1rem 4rem;
+    overflow-x: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg, transparent, transparent 2px,
+      rgba(0,0,0,0.08) 2px, rgba(0,0,0,0.08) 4px
+    );
+    pointer-events: none; z-index: 100;
+  }
+
+  /* ── Header ─────────────────────────────── */
+  header {
+    width: 100%; max-width: 720px;
+    padding: 3rem 0 2rem;
+    display: flex; flex-direction: column; gap: 0.4rem;
+  }
+
+  h1 {
+    font-family: var(--sans); font-weight: 800;
+    font-size: clamp(2.4rem, 6vw, 3.6rem);
+    letter-spacing: -0.03em; color: var(--text); line-height: 1;
+  }
+  h1 span { color: var(--accent); }
+
+  .tagline {
+    font-family: var(--sans);
+    font-size: clamp(0.95rem, 2.5vw, 1.1rem);
+    color: #999; font-weight: 400;
+    margin-top: 0.4rem; letter-spacing: -0.01em;
+  }
+
+  .rule-badge {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    background: var(--accent-dim);
+    border: 1px solid rgba(232,255,71,0.25);
+    color: var(--accent);
+    font-family: var(--mono); font-size: 0.67rem; letter-spacing: 0.08em;
+    padding: 0.3rem 0.75rem; border-radius: 2px;
+    margin-top: 1rem; width: fit-content;
+  }
+
+  .reassurance-strip {
+    display: flex; align-items: center; gap: 0.65rem;
+    flex-wrap: wrap; margin-top: 0.85rem;
+  }
+  .reassurance-item {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    font-family: var(--mono); font-size: 0.64rem;
+    color: var(--muted); letter-spacing: 0.03em;
+  }
+  .reassurance-item svg { color: var(--success); flex-shrink: 0; }
+  .reassurance-sep { color: #333; font-size: 0.8rem; }
+
+  /* ── Card ────────────────────────────────── */
+  .card {
+    width: 100%; max-width: 720px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px; overflow: hidden;
+    transition: border-color 0.3s;
+  }
+
+  /* ── Drop zone ───────────────────────────── */
+  .drop-zone {
+    padding: 3.5rem 2rem;
+    display: flex; flex-direction: column;
+    align-items: center; gap: 1.1rem;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.2s; text-align: center;
+  }
+  .drop-zone:hover, .drop-zone.drag-over { background: rgba(232,255,71,0.03); }
+  .drop-zone.drag-over { border-color: var(--accent); }
+
+  .drop-icon {
+    width: 58px; height: 58px;
+    border: 2px solid var(--border); border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    transition: border-color 0.2s, transform 0.2s;
+  }
+  .drop-zone:hover .drop-icon, .drop-zone.drag-over .drop-icon {
+    border-color: var(--accent); transform: translateY(-3px);
+  }
+  .drop-icon svg { color: var(--muted); transition: color 0.2s; }
+  .drop-zone:hover .drop-icon svg,
+  .drop-zone.drag-over .drop-icon svg { color: var(--accent); }
+
+  .drop-label { font-weight: 600; font-size: 1rem; color: var(--text); }
+  .drop-sub { font-family: var(--mono); font-size: 0.69rem; color: var(--muted); letter-spacing: 0.05em; }
+
+  .browse-btn {
+    font-family: var(--mono); font-size: 0.71rem;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text); padding: 0.55rem 1.4rem;
+    cursor: pointer; border-radius: 2px;
+    transition: border-color 0.2s, color 0.2s, background 0.2s;
+  }
+  .browse-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
+  input[type="file"] { display: none; }
+
+  /* ── Auto-run notice ─────────────────────── */
+  .auto-notice {
+    display: none;
+    padding: 0.65rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    align-items: center; gap: 0.6rem;
+    background: rgba(232,255,71,0.04);
+  }
+  .auto-notice.visible { display: flex; }
+  .auto-notice-text {
+    font-family: var(--mono); font-size: 0.66rem;
+    color: var(--accent); letter-spacing: 0.05em;
+  }
+  .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid rgba(232,255,71,0.2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite; flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── File info ───────────────────────────── */
+  .file-info {
+    display: none;
+    padding: 1.1rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    align-items: center; gap: 1rem;
+  }
+  .file-info.visible { display: flex; }
+
+  .file-icon {
+    width: 38px; height: 38px;
+    background: var(--accent-dim);
+    border: 1px solid rgba(232,255,71,0.2);
+    border-radius: 3px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .file-icon svg { color: var(--accent); }
+
+  .file-meta { flex: 1; min-width: 0; }
+  .file-name {
+    font-family: var(--mono); font-size: 0.79rem; color: var(--text);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .file-details {
+    font-family: var(--mono); font-size: 0.66rem; color: var(--muted);
+    margin-top: 0.2rem; letter-spacing: 0.04em;
+  }
+
+  .clear-btn {
+    background: transparent; border: none; color: var(--muted);
+    cursor: pointer; padding: 0.3rem; border-radius: 2px;
+    transition: color 0.2s; flex-shrink: 0;
+  }
+  .clear-btn:hover { color: var(--danger); }
+
+  /* ── Page map ────────────────────────────── */
+  .page-map {
+    display: none;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    gap: 0.45rem; flex-wrap: wrap; align-items: center;
+  }
+  .page-map.visible { display: flex; }
+
+  .page-map-label {
+    font-family: var(--mono); font-size: 0.62rem; color: var(--muted);
+    letter-spacing: 0.08em; text-transform: uppercase; width: 100%;
+  }
+
+  .page-pill {
+    font-family: var(--mono); font-size: 0.62rem;
+    padding: 0.2rem 0.48rem; border-radius: 2px;
+    border: 1px solid var(--border); color: var(--muted);
+  }
+  .page-pill.pair-a { border-color: rgba(232,255,71,0.4); color: var(--accent); background: rgba(232,255,71,0.06); }
+  .page-pill.pair-b { border-color: rgba(232,255,71,0.18); color: rgba(232,255,71,0.5); background: rgba(232,255,71,0.02); }
+  .page-pill.solo   { border-color: rgba(255,82,82,0.3); color: rgba(255,82,82,0.6); }
+
+  .swap-arrow { color: var(--accent); font-size: 0.58rem; opacity: 0.4; }
+
+  /* ── Progress ────────────────────────────── */
+  .progress-wrap { display: none; padding: 0 1.5rem 0.9rem; }
+  .progress-wrap.visible { display: block; }
+  .progress-track { height: 2px; background: var(--border); border-radius: 1px; overflow: hidden; }
+  .progress-fill {
+    height: 100%; background: var(--accent);
+    width: 0%; transition: width 0.3s ease; border-radius: 1px;
+  }
+
+  /* ── Action bar ──────────────────────────── */
+  .action-bar {
+    padding: 1.1rem 1.5rem;
+    display: flex; align-items: center; gap: 1rem;
+  }
+
+  .process-btn {
+    font-family: var(--mono); font-size: 0.71rem;
+    letter-spacing: 0.12em; text-transform: uppercase; font-weight: 700;
+    background: var(--accent); color: #0e0e0e;
+    border: none; padding: 0.7rem 1.7rem;
+    cursor: pointer; border-radius: 2px;
+    transition: opacity 0.2s, transform 0.15s; flex-shrink: 0;
+  }
+  .process-btn:hover:not(:disabled) { opacity: 0.84; transform: translateY(-1px); }
+  .process-btn:disabled { opacity: 0.28; cursor: not-allowed; transform: none; }
+
+  .status-text {
+    font-family: var(--mono); font-size: 0.68rem;
+    color: var(--muted); letter-spacing: 0.04em; flex: 1; line-height: 1.55;
+  }
+  .status-text.success    { color: var(--success); }
+  .status-text.error      { color: var(--danger); }
+  .status-text.processing { color: var(--accent); }
+
+  /* ── Result ──────────────────────────────── */
+  .result-section {
+    display: none;
+    padding: 1.4rem 1.5rem;
+    border-top: 1px solid var(--border);
+    flex-direction: column; gap: 1rem;
+    background: rgba(105,255,142,0.025);
+  }
+  .result-section.visible {
+    display: flex;
+    animation: fade-in-up 0.35s ease forwards;
+  }
+
+  .result-header { display: flex; align-items: center; gap: 0.75rem; }
+
+  .result-icon {
+    width: 34px; height: 34px;
+    background: rgba(105,255,142,0.1);
+    border: 1px solid rgba(105,255,142,0.25);
+    border-radius: 3px;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+
+  .result-title { font-weight: 600; font-size: 0.9rem; color: var(--success); }
+  .result-sub { font-family: var(--mono); font-size: 0.63rem; color: var(--muted); margin-top: 0.15rem; }
+
+  .download-btn {
+    font-family: var(--mono); font-size: 0.7rem;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    background: rgba(105,255,142,0.07);
+    border: 1px solid rgba(105,255,142,0.35);
+    color: var(--success); padding: 0.65rem 1.4rem;
+    cursor: pointer; border-radius: 2px;
+    transition: background 0.2s, border-color 0.2s;
+    display: flex; align-items: center; gap: 0.5rem;
+    width: fit-content;
+  }
+  .download-btn:hover { background: rgba(105,255,142,0.14); border-color: rgba(105,255,142,0.6); }
+
+  /* ── Explainer ───────────────────────────── */
+  .explainer {
+    width: 100%; max-width: 720px;
+    margin-top: 2.5rem;
+    display: grid; grid-template-columns: repeat(3,1fr);
+    gap: 1px; background: var(--border);
+    border: 1px solid var(--border); border-radius: 4px; overflow: hidden;
+  }
+  .explainer-step {
+    background: var(--surface);
+    padding: 1.25rem;
+    display: flex; flex-direction: column; gap: 0.45rem;
+  }
+  .step-num { font-family: var(--mono); font-size: 0.62rem; color: var(--accent); letter-spacing: 0.1em; }
+  .step-title { font-weight: 600; font-size: 0.85rem; color: var(--text); }
+  .step-desc { font-family: var(--mono); font-size: 0.63rem; color: var(--muted); line-height: 1.65; }
+
+  /* ── Animations ──────────────────────────── */
+  @keyframes fade-in-up {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes pulse-border {
+    0%, 100% { border-color: var(--border); }
+    50%       { border-color: rgba(232,255,71,0.45); }
+  }
+  .processing-anim { animation: pulse-border 1.4s ease-in-out infinite; }
+
+  @media (max-width: 520px) {
+    .explainer { grid-template-columns: 1fr; }
+    .action-bar { flex-direction: column; align-items: flex-start; }
+    .reassurance-strip { gap: 0.4rem; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Page<span>Fix</span></h1>
+  <p class="tagline">Fix wrongly ordered PDFs — drop it, done.</p>
+  <div class="rule-badge">
+    <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+      <circle cx="5" cy="5" r="4" stroke="currentColor" stroke-width="1.2"/>
+      <path d="M3 5h4M5 3l2 2-2 2" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+    </svg>
+    SWAPS PAGE PAIRS: 1↔2 · 3↔4 · 5↔6 · AND SO ON
+  </div>
+  <div class="reassurance-strip">
+    <span class="reassurance-item">
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      No compression
+    </span>
+    <span class="reassurance-sep">·</span>
+    <span class="reassurance-item">
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      No quality loss
+    </span>
+    <span class="reassurance-sep">·</span>
+    <span class="reassurance-item">
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      File never leaves your device
+    </span>
+  </div>
+</header>
+
+<div class="card" id="mainCard">
+
+  <!-- Drop zone -->
+  <div class="drop-zone" id="dropZone">
+    <div class="drop-icon">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="12" y1="18" x2="12" y2="12"/>
+        <polyline points="9 15 12 12 15 15"/>
+      </svg>
+    </div>
+    <div class="drop-label">Drop your PDF here</div>
+    <div class="drop-sub">Runs automatically on upload — no extra steps</div>
+    <button class="browse-btn" onclick="document.getElementById('fileInput').click()">Browse File</button>
+    <input type="file" id="fileInput" accept=".pdf,application/pdf">
+  </div>
+
+  <!-- Auto-run notice -->
+  <div class="auto-notice" id="autoNotice">
+    <div class="spinner"></div>
+    <div class="auto-notice-text" id="autoNoticeText">Reading PDF…</div>
+  </div>
+
+  <!-- File info -->
+  <div class="file-info" id="fileInfo">
+    <div class="file-icon">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+      </svg>
+    </div>
+    <div class="file-meta">
+      <div class="file-name" id="fileName">—</div>
+      <div class="file-details" id="fileDetails">—</div>
+    </div>
+    <button class="clear-btn" id="clearBtn" title="Remove file">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- Page map -->
+  <div class="page-map" id="pageMap">
+    <div class="page-map-label">Swap preview</div>
+  </div>
+
+  <!-- Progress bar -->
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-track">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+  </div>
+
+  <!-- Action bar -->
+  <div class="action-bar">
+    <button class="process-btn" id="processBtn" disabled>Fix PDF</button>
+    <div class="status-text" id="statusText">Upload a PDF to begin</div>
+  </div>
+
+  <!-- Result -->
+  <div class="result-section" id="resultSection">
+    <div class="result-header">
+      <div class="result-icon">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#69ff8e" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="20 6 9 17 4 12"/>
+        </svg>
+      </div>
+      <div>
+        <div class="result-title">PDF fixed successfully</div>
+        <div class="result-sub" id="resultSub">—</div>
+      </div>
+    </div>
+    <button class="download-btn" id="downloadBtn">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+      </svg>
+      Download Fixed PDF
+    </button>
+  </div>
+
+</div>
+
+<!-- Explainer -->
+<div class="explainer">
+  <div class="explainer-step">
+    <div class="step-num">01 / UPLOAD</div>
+    <div class="step-title">Drop your broken PDF</div>
+    <div class="step-desc">Drag it onto the zone or click Browse. Runs immediately on upload. Your file never leaves your browser.</div>
+  </div>
+  <div class="explainer-step">
+    <div class="step-num">02 / FIX</div>
+    <div class="step-title">Pages reorder instantly</div>
+    <div class="step-desc">Pages 1↔2, 3↔4, 5↔6 and so on are corrected. An odd last page is kept in place. Zero quality loss.</div>
+  </div>
+  <div class="explainer-step">
+    <div class="step-num">03 / DOWNLOAD</div>
+    <div class="step-title">Get the corrected file</div>
+    <div class="step-desc">One click downloads the fixed PDF. Same content, same quality — just in the right order.</div>
+  </div>
+</div>
+
+<script>
+  const dropZone      = document.getElementById('dropZone');
+  const fileInput     = document.getElementById('fileInput');
+  const autoNotice    = document.getElementById('autoNotice');
+  const autoNoticeText= document.getElementById('autoNoticeText');
+  const fileInfo      = document.getElementById('fileInfo');
+  const fileName      = document.getElementById('fileName');
+  const fileDetails   = document.getElementById('fileDetails');
+  const clearBtn      = document.getElementById('clearBtn');
+  const pageMap       = document.getElementById('pageMap');
+  const processBtn    = document.getElementById('processBtn');
+  const statusText    = document.getElementById('statusText');
+  const progressWrap  = document.getElementById('progressWrap');
+  const progressFill  = document.getElementById('progressFill');
+  const resultSection = document.getElementById('resultSection');
+  const resultSub     = document.getElementById('resultSub');
+  const downloadBtn   = document.getElementById('downloadBtn');
+  const mainCard      = document.getElementById('mainCard');
+
+  let currentFile = null;
+  let resultBlob  = null;
+
+  // ── Drag & drop ──────────────────────────────────────────────
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0];
+    if (f && f.type === 'application/pdf') loadAndProcess(f);
+    else setStatus('Only PDF files are supported.', 'error');
+  });
+  dropZone.addEventListener('click', e => { if (e.target.tagName !== 'BUTTON') fileInput.click(); });
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadAndProcess(fileInput.files[0]); });
+  clearBtn.addEventListener('click', () => reset());
+
+  // Manual re-run if needed
+  processBtn.addEventListener('click', () => { if (currentFile) loadAndProcess(currentFile); });
+
+  // Download
+  downloadBtn.addEventListener('click', () => {
+    if (!resultBlob) return;
+    const base = currentFile.name.replace(/\.pdf$/i, '');
+    const url  = URL.createObjectURL(resultBlob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = `${base}_fixed.pdf`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  });
+
+  // ── Load + auto-run ──────────────────────────────────────────
+  async function loadAndProcess(file) {
+    reset(false);
+    currentFile = file;
+
+    autoNotice.classList.add('visible');
+    autoNoticeText.textContent = 'Reading PDF…';
+
+    const bytes = await file.arrayBuffer();
+    let pdf;
+    try {
+      pdf = await PDFLib.PDFDocument.load(bytes);
+    } catch(err) {
+      autoNotice.classList.remove('visible');
+      setStatus('Could not read this PDF. Is it password-protected?', 'error');
+      processBtn.disabled = false;
+      return;
+    }
+
+    const pageCount = pdf.getPageCount();
+    const kb = (file.size / 1024).toFixed(1);
+    fileName.textContent    = file.name;
+    fileDetails.textContent = `${pageCount} pages · ${kb} KB`;
+    fileInfo.classList.add('visible');
+    buildPageMap(pageCount);
+
+    autoNotice.classList.remove('visible');
+
+    // Kick off processing immediately
+    await runProcess(pdf, pageCount, file);
+  }
+
+  // ── Core process ─────────────────────────────────────────────
+  async function runProcess(srcDoc, total, file) {
+    resultSection.classList.remove('visible');
+    resultBlob = null;
+    processBtn.disabled = true;
+    mainCard.classList.add('processing-anim');
+    progressWrap.classList.add('visible');
+    setProgress(15);
+    setStatus('Fixing page order…', 'processing');
+
+    try {
+      const outDoc = await PDFLib.PDFDocument.create();
+
+      // Swap each consecutive pair: [1,0, 3,2, 5,4, …]
+      const order = [];
+      for (let i = 0; i < total - 1; i += 2) { order.push(i+1, i); }
+      if (total % 2 !== 0) order.push(total - 1);
+
+      setProgress(45);
+      setStatus('Generating output…', 'processing');
+
+      const copied = await outDoc.copyPages(srcDoc, order);
+      copied.forEach(p => outDoc.addPage(p));
+
+      setProgress(82);
+      const outBytes = await outDoc.save();
+      resultBlob = new Blob([outBytes], { type: 'application/pdf' });
+
+      setProgress(100);
+      mainCard.classList.remove('processing-anim');
+      progressWrap.classList.remove('visible');
+      setProgress(0);
+
+      const pairs = Math.floor(total / 2);
+      resultSub.textContent =
+        `${pairs} pair${pairs !== 1 ? 's' : ''} reordered · ${total} pages total · ${(resultBlob.size/1024).toFixed(1)} KB`;
+      resultSection.classList.add('visible');
+      setStatus('Done — your PDF is fixed.', 'success');
+      processBtn.disabled = false;
+
+    } catch(err) {
+      mainCard.classList.remove('processing-anim');
+      progressWrap.classList.remove('visible');
+      setProgress(0);
+      setStatus('Error: ' + err.message, 'error');
+      processBtn.disabled = false;
+      console.error(err);
+    }
+  }
+
+  // ── Page map ─────────────────────────────────────────────────
+  function buildPageMap(n) {
+    while (pageMap.children.length > 1) pageMap.removeChild(pageMap.lastChild);
+
+    const MAX_PAIRS = 7;
+    const pairs = Math.floor(n / 2);
+    const shown = Math.min(pairs, MAX_PAIRS);
+
+    for (let i = 0; i < shown; i++) {
+      const a = i*2+1, b = i*2+2;
+      makePill(`${a}`, 'pair-a');
+      makeArrow();
+      makePill(`${b}`, 'pair-b');
+      if (i < shown - 1 || pairs > MAX_PAIRS || n % 2 !== 0) makeSep();
+    }
+
+    if (pairs > MAX_PAIRS) {
+      const more = document.createElement('span');
+      more.className = 'page-pill';
+      more.textContent = `+${pairs - MAX_PAIRS} more`;
+      pageMap.appendChild(more);
+      if (n % 2 !== 0) makeSep();
+    }
+
+    if (n % 2 !== 0) makePill(`${n} (kept)`, 'solo');
+
+    pageMap.classList.add('visible');
+  }
+
+  function makePill(text, cls) {
+    const el = document.createElement('span');
+    el.className = `page-pill ${cls}`; el.textContent = text;
+    pageMap.appendChild(el);
+  }
+  function makeArrow() {
+    const el = document.createElement('span');
+    el.className = 'swap-arrow'; el.textContent = '⇄';
+    pageMap.appendChild(el);
+  }
+  function makeSep() {
+    const el = document.createElement('span');
+    el.style.cssText = 'font-size:0.6rem;color:#2a2a2a;font-family:var(--mono);margin:0 0.05rem';
+    el.textContent = '·'; pageMap.appendChild(el);
+  }
+
+  function setStatus(msg, type = '') {
+    statusText.textContent = msg;
+    statusText.className   = 'status-text' + (type ? ' '+type : '');
+  }
+  function setProgress(pct) { progressFill.style.width = pct + '%'; }
+
+  function reset(clearFile = true) {
+    if (clearFile) { currentFile = null; fileInput.value = ''; }
+    resultBlob = null;
+    fileInfo.classList.remove('visible');
+    autoNotice.classList.remove('visible');
+    pageMap.classList.remove('visible');
+    progressWrap.classList.remove('visible');
+    resultSection.classList.remove('visible');
+    mainCard.classList.remove('processing-anim');
+    processBtn.disabled = true;
+    setStatus('Upload a PDF to begin');
+    setProgress(0);
+    while (pageMap.children.length > 1) pageMap.removeChild(pageMap.lastChild);
+  }
+</script>
+</body>
+</html>
